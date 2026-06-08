@@ -1,150 +1,178 @@
 import streamlit as st
 import pandas as pd
-import collections
+import plotly.express as px
+import plotly.graph_objects as go
+from collections import Counter
 import re
 import os
 
-st.set_page_config(page_title="Dashboard Bibliométrico | Grupo 05", page_icon="🧠", layout="wide")
+st.set_page_config(
+    page_title="Dashboard IA y Salud Mental | Grupo 05",
+    page_icon="🧠",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 @st.cache_data
-def cargar_y_limpiar_datos(ruta_archivo):
-    df = pd.read_csv(ruta_archivo)
+def procesar_datos(ruta):
+    df = pd.read_csv(ruta)
     df['Year'] = pd.to_numeric(df['Year'], errors='coerce')
     df['Cited by'] = pd.to_numeric(df['Cited by'], errors='coerce').fillna(0)
     df['Abstract'] = df['Abstract'].fillna("No abstract available")
     df['Authors'] = df['Authors'].fillna("Unknown Author")
+    df['Title'] = df['Title'].fillna("Untitled")
     return df
 
-def extraer_top_autores(df):
-    registro_autores = {}
+def obtener_autores_limpios(df):
+    conteo_autores = {}
     for _, fila in df.iterrows():
         citas = int(fila['Cited by'])
-        cadena_autores = str(fila['Authors'])
+        autores_crudos = str(fila['Authors'])
         
-        if ";" in cadena_autores:
-            lista_autores = [a.strip() for a in cadena_autores.split(";")]
-        elif "," in cadena_autores:
-            lista_autores = [a.strip() for a in cadena_autores.split(",")]
+        if ";" in autores_crudos:
+            lista = [a.strip() for a in autores_crudos.split(";")]
+        elif "," in autores_crudos:
+            lista = [a.strip() for a in autores_crudos.split(",")]
         else:
-            lista_autores = [cadena_autores.strip()]
+            lista = [autores_crudos.strip()]
             
-        for autor in lista_autores:
+        for autor in lista:
             if autor and autor.lower() != "unknown author":
-                autor_limpio = autor.replace('"', '').replace("'", "")
-                if len(autor_limpio) > 22:
-                    autor_limpio = autor_limpio[:22] + "..."
-                registro_autores[autor_limpio] = registro_autores.get(autor_limpio, 0) + citas
+                autor_formateado = autor.replace('"', '').replace("'", "")
+                if len(autor_formateado) > 20:
+                    autor_formateado = autor_formateado[:18] + "..."
+                conteo_autores[autor_formateado] = conteo_autores.get(autor_formateado, 0) + citas
+                
+    df_res = pd.DataFrame(conteo_autores.items(), columns=['Autor', 'Citas Acumuladas'])
+    return df_res.sort_values(by='Citas Acumuladas', ascending=False).head(10)
 
-    df_autores = pd.DataFrame(registro_autores.items(), columns=['Autor', 'Total Citas'])
-    
-    if not df_autores.empty:
-        df_autores = df_autores.sort_values(by='Total Citas', ascending=False)
-        
-    return df_autores.head(10)
-
-def analizar_palabras_abstracts(df):
-    texto_completo = " ".join(df['Abstract'].dropna().astype(str).str.lower())
-    palabras = re.findall(r'\b[a-z]{5,}\b', texto_completo)
-    
+def extraer_conceptos_clave(df):
+    texto = " ".join(df['Abstract'].dropna().astype(str).str.lower())
+    palabras = re.findall(r'\b[a-z]{5,}\b', texto)
     stop_words = {'with', 'that', 'this', 'from', 'their', 'were', 'also', 'been', 'which', 
                   'study', 'research', 'using', 'used', 'patients', 'health', 'mental', 
-                  'artificial', 'intelligence', 'analysis', 'data', 'results', 'based', 'clinical'}
-                  
-    palabras_filtradas = [p for p in palabras if p not in stop_words]
-    conteo = collections.Counter(palabras_filtradas)
-    
-    return pd.DataFrame(conteo.most_common(10), columns=['Concepto', 'Frecuencia'])
+                  'artificial', 'intelligence', 'analysis', 'data', 'results', 'based', 'clinical',
+                  'intervention', 'system', 'learning', 'models', 'applications', 'potential'}
+    filtradas = [p for p in palabras if p not in stop_words]
+    return pd.DataFrame(Counter(filtradas).most_common(12), columns=['Concepto', 'Frecuencia'])
 
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2103/2103633.png", width=70)
-st.sidebar.title("Navegación y Filtros")
+st.sidebar.markdown("# 🛠️ Panel de Control")
 st.sidebar.markdown("---")
 
-st.sidebar.info(
-    "**Grupo Académico: 05**\n\n"
-    "**Pregunta de Investigación:**\n"
-    "¿Cómo contribuye la investigación académica en inteligencia artificial a la prevención de trastornos de salud mental en jóvenes desde 2019 a la actualidad?"
-)
+with st.sidebar.expander("📝 Detalles del Proyecto", expanded=True):
+    st.markdown("**Curso:** Fundamentos de Machine Learning")
+    st.markdown("**Grupo:** 05")
+    st.markdown("**Docente:** Mentor de Curso")
+    st.markdown("---")
+    st.markdown("**Pregunta de Investigación:**")
+    st.caption("¿Cómo contribuye la investigación académica en inteligencia artificial a la prevención de trastornos de salud mental en jóvenes desde 2019 a la actualidad?")
 
 archivo_defecto = "scopus_export.csv"
-uploaded_file = st.sidebar.file_uploader("📂 Cargar base Scopus alternativo (CSV)", type=["csv"])
-
+uploaded_file = st.sidebar.file_uploader("📂 Importar Dataset Scopus (CSV)", type=["csv"])
 ruta_final = uploaded_file if uploaded_file is not None else (archivo_defecto if os.path.exists(archivo_defecto) else None)
 
 if ruta_final is not None:
     try:
-        df_crudo = cargar_y_limpiar_datos(ruta_final)
+        df_base = procesar_datos(ruta_final)
         
-        min_year = int(df_crudo['Year'].min()) if not pd.isna(df_crudo['Year'].min()) else 2019
-        max_year = int(df_crudo['Year'].max()) if not pd.isna(df_crudo['Year'].max()) else 2026
+        min_year = int(df_base['Year'].min()) if not pd.isna(df_base['Year'].min()) else 2019
+        max_year = int(df_base['Year'].max()) if not pd.isna(df_base['Year'].max()) else 2026
         
-        st.sidebar.markdown("### Control de Tiempo")
-        rango_anios = st.sidebar.slider("Rango Cronológico", min_year, max_year, (2019, max_year))
+        st.sidebar.markdown("### 🕒 Filtro Temporal")
+        rango_anios = st.sidebar.slider("Rango de Años", min_year, max_year, (2019, max_year))
         
-        df = df_crudo[(df_crudo['Year'] >= rango_anios[0]) & (df_crudo['Year'] <= rango_anios[1])]
+        df_filtrado = df_base[(df_base['Year'] >= rango_anios[0]) & (df_base['Year'] <= rango_anios[1])]
         
-        st.title("🧠 Inteligencia Artificial y la Prevención de Salud Mental Juvenil")
-        st.caption(f"Análisis Bibliométrico de Producción Científica Avanzada e Impacto Global ({rango_anios[0]} - {rango_anios[1]})")
+        st.title("📊 Análisis Bibliométrico de Inteligencia Artificial en la Salud Mental Juvenil")
+        st.markdown("Exploración interactiva avanzada de datos científicos indexados.")
         st.markdown("---")
         
         kpi1, kpi2, kpi3 = st.columns(3)
         with kpi1:
-            st.markdown("<div style='background-color:#f0f2f6;padding:15px;border-radius:10px;text-align:center;'>", unsafe_allow_html=True)
-            st.metric("🔬 Volumen de Artículos", f"{len(df)} docs")
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.metric(label="📚 Artículos Indexados", value=f"{len(df_filtrado)} documentos")
         with kpi2:
-            st.markdown("<div style='background-color:#f0f2f6;padding:15px;border-radius:10px;text-align:center;'>", unsafe_allow_html=True)
-            st.metric("💬 Citas Académicas Totales", f"{int(df['Cited by'].sum())} citas")
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.metric(label="💬 Impacto Total (Citas)", value=f"{int(df_filtrado['Cited by'].sum())} referencias")
         with kpi3:
-            st.markdown("<div style='background-color:#f0f2f6;padding:15px;border-radius:10px;text-align:center;'>", unsafe_allow_html=True)
-            st.metric("📈 Índice de Impacto Promedio", f"{round(df['Cited by'].mean(), 2)} c/u")
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.metric(label="🎯 Ratio de Citación Medio", value=f"{round(df_filtrado['Cited by'].mean(), 2)} por documento")
             
         st.markdown("<br>", unsafe_allow_html=True)
         
-        st.subheader("📊 Bloque 1: Evolución Temporal e Investigadores de Mayor Impacto")
-        col1, col2 = st.columns(2)
+        tab_lineas, tab_autores, tab_contenido, tab_explorador = st.tabs([
+            "📈 Tendencias Temporales", 
+            "✍️ Análisis de Investigadores", 
+            "🔍 Mapeo Lingüístico de Abstracts", 
+            "📋 Repositorio Integrado"
+        ])
         
-        with col1:
-            st.markdown("**Cronología de Publicaciones Científicas**")
-            prod_anual = df['Year'].value_counts().sort_index()
-            if not prod_anual.empty:
-                st.area_chart(prod_anual, color="#1f77b4")
-            else:
-                st.warning("No hay registros en este rango.")
-                
-        with col2:
-            st.markdown("**Top 10 Investigadores con Mayor Nivel de Citación**")
-            df_top_autores = extraer_top_autores(df)
-            if not df_top_autores.empty:
-                st.bar_chart(df_top_autores.set_index('Autor')['Total Citas'], color="#42929d")
-            else:
-                st.warning("Sin datos de citación en este segmento.")
-                
-        st.markdown("---")
-        
-        st.subheader("🔍 Bloque 2: Análisis de Palabras Clave y Tendencias en Abstracts")
-        col3, col4 = st.columns([1, 1.3])
-        
-        with col3:
-            st.markdown("**Matriz Numérica de Conceptos Frecuentes**")
-            df_palabras = analizar_palabras_abstracts(df)
-            st.dataframe(df_palabras, use_container_width=True, hide_index=True)
+        with tab_lineas:
+            st.subheader("Evolución Cronológica de la Producción Científica")
+            prod_anual = df_filtrado['Year'].value_counts().sort_index().reset_index()
+            prod_anual.columns = ['Año', 'Cantidad de Publicaciones']
             
-        with col4:
-            st.markdown("**Frecuencia de Enfoques de IA y Métodos de Prevención**")
-            if not df_palabras.empty:
-                st.bar_chart(df_palabras.set_index('Concepto')['Frecuencia'], color="#2ca02c")
+            if not prod_anual.empty:
+                fig_linea = px.line(
+                    prod_anual, x='Año', y='Cantidad de Publicaciones',
+                    markers=True, text='Cantidad de Publicaciones',
+                    template="plotly_white",
+                    labels={'Cantidad de Publicaciones': 'Documentos'}
+                )
+                fig_linea.update_traces(line_width=3, marker_size=10, textposition="top center")
+                st.plotly_chart(fig_linea, use_container_width=True)
             else:
-                st.warning("No se pudieron procesar los resúmenes.")
+                st.warning("No hay suficientes datos temporales para el rango seleccionado.")
                 
-        st.markdown("---")
-        
-        st.subheader("📋 Bloque 3: Explorador e Integridad de Datos (Vista Previa df.head)")
-        st.success("Carga exitosa: El archivo se ha indexado correctamente en la memoria del aplicativo.")
-        st.dataframe(df[['Authors', 'Title', 'Year', 'Cited by', 'DOI']].head(10), use_container_width=True)
-        
+        with tab_autores:
+            st.subheader("Top 10 Investigadores con Mayor Impacto Académico")
+            df_autores = obtener_autores_limpios(df_filtrado)
+            
+            if not df_autores.empty:
+                fig_barras_autores = px.bar(
+                    df_autores, x='Citas Acumuladas', y='Autor',
+                    orientation='h', template="plotly_white",
+                    color='Citas Acumuladas',
+                    color_continuous_scale=px.colors.sequential.Teal
+                )
+                fig_barras_autores.update_layout(yaxis={'categoryorder': 'total ascending'}, coloraxis_showscale=False)
+                st.plotly_chart(fig_barras_autores, use_container_width=True)
+            else:
+                st.warning("Sin datos de referencias bibliográficas disponibles.")
+                
+        with tab_contenido:
+            st.subheader("Desglose de Enfoques Metodológicos y de Prevención")
+            st.markdown("Frecuencia de términos técnicos y médicos más utilizados dentro de los resúmenes académicos.")
+            df_conceptos = extraer_conceptos_clave(df_filtrado)
+            
+            if not df_conceptos.empty:
+                fig_conceptos = px.treemap(
+                    df_conceptos, path=['Concepto'], values='Frecuencia',
+                    template="plotly_white",
+                    color='Frecuencia',
+                    color_continuous_scale=px.colors.sequential.Mint
+                )
+                fig_conceptos.update_layout(coloraxis_showscale=False)
+                st.plotly_chart(fig_conceptos, use_container_width=True)
+            else:
+                st.warning("No se pudo procesar el campo de resúmenes científicos.")
+                
+        with tab_explorador:
+            st.subheader("Exploración Completa de la Literatura Indexada")
+            st.info("Utiliza las herramientas internas de la tabla para ordenar, buscar o aislar columnas específicas.")
+            
+            columnas_visualizacion = ['Authors', 'Title', 'Year', 'Cited by', 'DOI']
+            st.dataframe(
+                df_filtrado[columnas_visualizacion].sort_values(by='Cited by', ascending=False).reset_index(drop=True),
+                use_container_width=True
+            )
+            
+            csv_descarga = df_filtrado.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Descargar Subconjunto de Datos Filtrados (CSV)",
+                data=csv_descarga,
+                file_name=f"analisis_ia_salud_mental_{rango_anios[0]}_{rango_anios[1]}.csv",
+                mime="text/csv"
+            )
+            
     except Exception as e:
-        st.error(f"Error técnico durante el parseo del archivo CSV: {e}")
+        st.error(f"Error durante el procesamiento del archivo plano: {e}")
 else:
-    st.warning("👋 El sistema está en espera del archivo de datos. Por favor, asegúrate de añadir 'scopus_export.csv' en tu repositorio de GitHub o cárgalo usando el botón del panel izquierdo.")
+    st.warning("👋 Cargue el archivo 'scopus_export.csv' en la raíz de su repositorio o utilícelo mediante el cargador manual de la barra lateral.")
