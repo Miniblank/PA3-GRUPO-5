@@ -645,7 +645,7 @@ with col_5b:
         color_discrete_map={"Open Access":"#a78bfa","Acceso Restringido":"#2d333b"},
     )
     fig_oa_yr.update_layout(
-        **BASE_LAYOUT,
+        BASE_LAYOUT,
         height=320,
         title=dict(text="📅 Evolución del Acceso Abierto por Año",
                    font=dict(color="#e6edf3", size=14)),
